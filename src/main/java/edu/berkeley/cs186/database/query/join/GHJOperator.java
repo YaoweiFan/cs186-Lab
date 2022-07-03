@@ -71,7 +71,23 @@ public class GHJOperator extends JoinOperator {
         // You may find the implementation in SHJOperator.java to be a good
         // starting point. You can use the static method HashFunc.hashDataBox
         // to get a hash value.
-        return;
+        int columnIndex;
+        if(left) {
+            columnIndex = getLeftColumnIndex();
+        } else {
+            columnIndex = getRightColumnIndex();
+        }
+
+        for (Record record: records) {
+            // Partition records on the chosen column
+            DataBox columnValue = record.getValue(columnIndex);
+            int hash = HashFunc.hashDataBox(columnValue, pass);
+            // modulo to get which partition to use
+            int partitionNum = hash % partitions.length;
+            if (partitionNum < 0)  // hash might be negative
+                partitionNum += partitions.length;
+            partitions[partitionNum].add(record);
+        }
     }
 
     /**
@@ -112,6 +128,30 @@ public class GHJOperator extends JoinOperator {
         // You shouldn't refer to any variable starting with "left" or "right"
         // here, use the "build" and "probe" variables we set up for you.
         // Check out how SHJOperator implements this function if you feel stuck.
+
+        Map<DataBox, List<Record>> hashTable = new HashMap<>();
+
+        // Building stage
+        for (Record buildRecord: buildRecords) {
+            DataBox buildJoinValue = buildRecord.getValue(buildColumnIndex);
+            if (!hashTable.containsKey(buildJoinValue)) {
+                hashTable.put(buildJoinValue, new ArrayList<>());
+            }
+            hashTable.get(buildJoinValue).add(buildRecord);
+        }
+
+        // Probing stage
+        for (Record probeRecord: probeRecords) {
+            DataBox probeJoinValue = probeRecord.getValue(probeColumnIndex);
+            if (!hashTable.containsKey(probeJoinValue)) continue;
+            // We have to join the right record with each left record with
+            // a matching key
+            for (Record buildRecord : hashTable.get(probeJoinValue)) {
+                Record joinedRecord = buildRecord.concat(probeRecord);
+                // Accumulate joined records in this.joinedRecords
+                this.joinedRecords.add(joinedRecord);
+            }
+        }
     }
 
     /**
@@ -136,6 +176,11 @@ public class GHJOperator extends JoinOperator {
             // TODO(proj3_part1): implement the rest of grace hash join
             // If you meet the conditions to run the build and probe you should
             // do so immediately. Otherwise you should make a recursive call.
+            if(leftPartitions[i].getNumPages() > this.numBuffers - 2 && rightPartitions[i].getNumPages() > this.numBuffers - 2) {
+                run(leftPartitions[i], rightPartitions[i], pass+1);
+            } else {
+                buildAndProbe(leftPartitions[i], rightPartitions[i]);
+            }
         }
     }
 
@@ -203,6 +248,14 @@ public class GHJOperator extends JoinOperator {
 
         // TODO(proj3_part1): populate leftRecords and rightRecords such that
         // SHJ breaks when trying to join them but not GHJ
+        // SHJ 的一个 paration 最多能装下 (6-2)*8=32 条记录，总共有 6-1=5 个 paration
+        for(int i=0; i<6; ++i) {
+            Record r = createRecord(i);
+            for(int j=0; j<32; ++j) {
+                leftRecords.add(r);
+                rightRecords.add(r);
+            }
+        }
         return new Pair<>(leftRecords, rightRecords);
     }
 
@@ -223,7 +276,13 @@ public class GHJOperator extends JoinOperator {
         ArrayList<Record> leftRecords = new ArrayList<>();
         ArrayList<Record> rightRecords = new ArrayList<>();
         // TODO(proj3_part1): populate leftRecords and rightRecords such that GHJ breaks
-
+        Record r = createRecord(10);
+        for(int i=0; i<6; ++i) {
+            for(int j=0; j<8; ++j) {
+                leftRecords.add(r);
+                rightRecords.add(r);
+            }
+        }
         return new Pair<>(leftRecords, rightRecords);
     }
 }

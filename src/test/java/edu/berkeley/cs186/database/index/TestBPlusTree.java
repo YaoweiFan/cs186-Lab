@@ -144,6 +144,7 @@ public class TestBPlusTree {
         String leaf2 = "((7 (7 7)) (8 (8 8)) (9 (9 9)))";
         String leaf3 = "((10 (10 10)) (11 (11 11)))";
         String sexp = String.format("(%s 4 %s 7 %s 10 %s)", leaf0, leaf1, leaf2, leaf3);
+        tree.toDotPDFFile("tree.pdf");
         assertEquals(sexp, tree.toSexp());
     }
 
@@ -484,5 +485,21 @@ public class TestBPlusTree {
         assertEquals(3, LeafNode.maxOrder(pageSizeInBytes, keySchema));
         assertEquals(3, InnerNode.maxOrder(pageSizeInBytes, keySchema));
         assertEquals(3, BPlusTree.maxOrder(pageSizeInBytes, keySchema));
+    }
+
+    @Test
+    public void testDeleteEverything() {
+        BPlusTree tree = getBPlusTree(Type.intType(), 2);
+        for(int i=0; i<100; ++i) {
+            tree.put(new IntDataBox(i), new RecordId(i, (short) i));
+        }
+        Iterator<RecordId> iterBeforeDeleting = tree.scanAll();
+        assertTrue(iterBeforeDeleting.hasNext());
+
+        for(int i=0; i<100; ++i) {
+            tree.remove(new IntDataBox(i));
+        }
+        Iterator<RecordId> iter = tree.scanAll();
+        assertFalse(iter.hasNext());
     }
 }

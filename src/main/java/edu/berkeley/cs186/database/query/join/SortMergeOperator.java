@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.NoSuchElementException;
 
 public class SortMergeOperator extends JoinOperator {
+    private int leftColumnIndex;
+    private int rightColumnIndex;
+
     public SortMergeOperator(QueryOperator leftSource,
                              QueryOperator rightSource,
                              String leftColumnName,
@@ -22,6 +25,8 @@ public class SortMergeOperator extends JoinOperator {
         super(prepareLeft(transaction, leftSource, leftColumnName),
               prepareRight(transaction, rightSource, rightColumnName),
               leftColumnName, rightColumnName, transaction, JoinType.SORTMERGE);
+        this.leftColumnIndex = leftSource.getSchema().findField(leftColumnName);
+        this.rightColumnIndex = rightSource.getSchema().findField(rightColumnName);
         this.stats = this.estimateStats();
     }
 
@@ -100,7 +105,7 @@ public class SortMergeOperator extends JoinOperator {
 
         private SortMergeIterator() {
             super();
-            leftIterator = getLeftSource().iterator();
+            leftIterator = getLeftSource().iterator(); // 调用 iterator() 方法的时候调用了 sort() 方法
             rightIterator = getRightSource().backtrackingIterator();
             rightIterator.markNext();
 
@@ -140,7 +145,38 @@ public class SortMergeOperator extends JoinOperator {
          */
         private Record fetchNextRecord() {
             // TODO(proj3_part1): implement
-            return null;
+            while(true) {
+                if (!marked) {
+                    while (compare(leftRecord, rightRecord) < 0) {
+                        if(leftIterator.hasNext()) leftRecord = leftIterator.next(); else return null;
+                    }
+                    while (compare(leftRecord, rightRecord) > 0) {
+                        if(rightIterator.hasNext()) rightRecord = rightIterator.next(); else return null;
+                    }
+                    rightIterator.markPrev();
+                    marked = true;
+                }
+                if (leftRecord != null && rightRecord != null && compare(leftRecord, rightRecord) == 0) {
+                    Record r = leftRecord.concat(rightRecord);
+                    if(rightIterator.hasNext()) rightRecord = rightIterator.next(); else rightRecord = null;
+                    return r;
+                } else {
+                    rightIterator.reset();
+                    rightRecord = rightIterator.next();
+                    if(leftIterator.hasNext()) {
+                        leftRecord = leftIterator.next();
+                    }
+                    else {
+                        leftRecord = null;
+                        return null;
+                    }
+                    marked = false;
+                }
+            }
+        }
+
+        private int compare(Record r1, Record r2) {
+            return r1.getValue(leftColumnIndex).compareTo(r2.getValue(rightColumnIndex));
         }
 
         @Override

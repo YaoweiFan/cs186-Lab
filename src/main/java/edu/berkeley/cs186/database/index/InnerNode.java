@@ -81,8 +81,13 @@ class InnerNode extends BPlusNode {
     @Override
     public LeafNode get(DataBox key) {
         // TODO(proj2): implement
-
-        return null;
+        // 递归找到叶节点
+        int index = numLessThanEqual(key, keys);
+        BPlusNode node = getChild(index);
+        if (node instanceof LeafNode)
+            return (LeafNode)node;
+        else
+            return node.get(key);
     }
 
     // See BPlusNode.getLeftmostLeaf.
@@ -90,32 +95,107 @@ class InnerNode extends BPlusNode {
     public LeafNode getLeftmostLeaf() {
         assert(children.size() > 0);
         // TODO(proj2): implement
-
-        return null;
+        // 递归找到最左边的叶节点
+        BPlusNode node = getChild(0);
+        if (node instanceof LeafNode)
+            return (LeafNode)node;
+        else
+            return node.getLeftmostLeaf();
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
         // TODO(proj2): implement
+        int pos = numLessThanEqual(key, keys);
+        BPlusNode node = getChild(pos);
+        Optional<Pair<DataBox, Long>> p = node.put(key, rid);
+        if(!p.isPresent()) {
+            // 如果之前的 insert 并未导致 split
+            return Optional.empty();
+        }
+        else {
+            // 在 inner node 中插入新 pair
+            int index = InnerNode.numLessThanEqual(key, keys); // 不会出现相等的情况
+            keys.add(index, p.get().getFirst());
+            children.add(index+1, p.get().getSecond());
+            if(keys.size() <= 2*metadata.getOrder()) {
+                sync();
+                return Optional.empty();
+            } else {// 如果等于 2d，需要 split
+                List<DataBox> newKeys = new ArrayList<>();
+                List<Long> newChildren = new ArrayList<>();
+                // 分配 keys
+                for (int i = metadata.getOrder()+1; i < keys.size(); ++i) newKeys.add(keys.get(i));
+                // 分配 children
+                for (int i = metadata.getOrder()+1; i < children.size(); ++i) newChildren.add(children.get(i));
+                InnerNode nin = new InnerNode(metadata, bufferManager, newKeys, newChildren, treeContext);
 
-        return Optional.empty();
+                Pair<DataBox, Long> rp = new Pair<>(keys.get(metadata.getOrder()), nin.getPage().getPageNum());
+                int kNum = keys.size();
+                for (int i = metadata.getOrder(); i < kNum; ++i) keys.remove(keys.size()-1);
+                int cNum = children.size();
+                for (int i = metadata.getOrder()+1; i < cNum; ++i) children.remove(children.size()-1);
+
+                sync();
+                // 上层 inner node 需要插入的 key 和 right_node_page_num
+                return Optional.of(rp);
+            }
+        }
     }
+
 
     // See BPlusNode.bulkLoad.
     @Override
     public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
             float fillFactor) {
         // TODO(proj2): implement
+        if(!data.hasNext()) return Optional.empty();
+        if(children.isEmpty()) {
+            LeafNode leafNode = new LeafNode(metadata, bufferManager, new ArrayList<>(), new ArrayList<>(), Optional.empty(), treeContext);
+            children.add(leafNode.getPage().getPageNum());
+        }
+        BPlusNode node = getChild(children.size() - 1);
+        Optional<Pair<DataBox, Long>> res = node.bulkLoad(data, fillFactor);
 
-        return Optional.empty();
+        if(!res.isPresent()) { // 如果下层不需要 split 就返回，表明装填完毕
+            return Optional.empty();
+        } else if (keys.size() < 2*metadata.getOrder()) { // 如果该 node 还有空间，填入后继续调用本节点的 bulkLoad
+            keys.add(res.get().getFirst());
+            children.add(res.get().getSecond());
+            sync();
+            return bulkLoad(data, fillFactor);
+        }
+        else { // 如果该 node 无多余空间，split 后返回，再调用右节点的 bulkLoad
+            // 在 inner node 中插入新 pair
+            keys.add(res.get().getFirst());
+            children.add(res.get().getSecond());
+            List<DataBox> newKeys = new ArrayList<>();
+            List<Long> newChildren = new ArrayList<>();
+            // 分配 keys
+            for (int i = metadata.getOrder()+1; i < keys.size(); ++i) newKeys.add(keys.get(i));
+            // 分配 children
+            for (int i = metadata.getOrder()+1; i < children.size(); ++i) newChildren.add(children.get(i));
+            InnerNode nin = new InnerNode(metadata, bufferManager, newKeys, newChildren, treeContext);
+
+            Pair<DataBox, Long> rp = new Pair<>(keys.get(metadata.getOrder()), nin.getPage().getPageNum());
+            int kNum = keys.size();
+            for (int i = metadata.getOrder(); i < kNum; ++i) keys.remove(keys.size()-1);
+            int cNum = children.size();
+            for (int i = metadata.getOrder()+1; i < cNum; ++i) children.remove(children.size()-1);
+
+            sync();
+            // 上层 inner node 需要插入的 key 和 right_node_page_num
+            return Optional.of(rp);
+        }
     }
 
     // See BPlusNode.remove.
     @Override
     public void remove(DataBox key) {
         // TODO(proj2): implement
-
+        LeafNode leafNode = get(key);
+        leafNode.remove(key);
         return;
     }
 
