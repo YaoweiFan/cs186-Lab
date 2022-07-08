@@ -22,8 +22,13 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         // TODO(proj4_part1): implement
-
-        return false;
+        boolean [][] compatibility = {{true, false, true, false, false, true},
+                                      {false, false, false, false, false, true},
+                                      {true, false, true, true, true, true},
+                                      {false, false, true, true, false, true},
+                                      {false, false, true, false, false, true},
+                                      {true, true, true, true, true, true}};
+        return compatibility[a.ordinal()][b.ordinal()];
     }
 
     /**
@@ -54,8 +59,14 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         // TODO(proj4_part1): implement
+        boolean [][] canBeParent = {{true, false, true, false, false, true},
+                                    {false, false, false, false, false, true},
+                                    {true, false, true, false, false, true},
+                                    {true, true, true, true, true, true},
+                                    {true, true, true, true, true, true},
+                                    {false, false, false, false, false, true}};
 
-        return false;
+        return canBeParent[parentLockType.ordinal()][childLockType.ordinal()];
     }
 
     /**
@@ -69,8 +80,13 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         // TODO(proj4_part1): implement
-
-        return false;
+        boolean [][] canSubstitute = {{true, false, true, false, false, true},
+                                      {true, true, true, true, true, true},
+                                      {false, false, true, false, false, true},
+                                      {false, false, true, true, false, true},
+                                      {true, false, true, true, true, true},
+                                      {false, false, false, false, false, true}};
+        return canSubstitute[substitute.ordinal()][required.ordinal()];
     }
 
     /**
