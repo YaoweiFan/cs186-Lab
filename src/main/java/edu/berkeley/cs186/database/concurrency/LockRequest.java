@@ -11,6 +11,7 @@ import java.util.List;
  * everything in `releasedLocks` should be released *before* the transaction is
  * unblocked.
  */
+// 在 transaction unblock 之前， 'lock' should be granted, 'releasedLocks' should be released
 class LockRequest {
     TransactionContext transaction;
     Lock lock;

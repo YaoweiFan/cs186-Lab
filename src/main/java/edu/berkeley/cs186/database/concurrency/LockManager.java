@@ -59,7 +59,10 @@ public class LockManager {
          */
         public boolean checkCompatible(LockType lockType, long except) {
             // TODO(proj4_part1): implement
-            return false;
+            for(Lock lock : locks) {
+                if(!LockType.compatible(lockType, lock.lockType) && lock.transactionNum != except) return false;
+            }
+            return true;
         }
 
         /**
@@ -69,7 +72,8 @@ public class LockManager {
          */
         public void grantOrUpdateLock(Lock lock) {
             // TODO(proj4_part1): implement
-            return;
+            locks.removeIf(lk -> Objects.equals(lk.transactionNum, lock.transactionNum));
+            locks.add(lock);
         }
 
         /**
@@ -78,7 +82,7 @@ public class LockManager {
          */
         public void releaseLock(Lock lock) {
             // TODO(proj4_part1): implement
-            return;
+            locks.removeIf(lk->Objects.equals(lk, lock));
         }
 
         /**
@@ -87,7 +91,12 @@ public class LockManager {
          */
         public void addToQueue(LockRequest request, boolean addFront) {
             // TODO(proj4_part1): implement
-            return;
+            if(addFront) {
+                waitingQueue.addFirst(request);
+            }
+            else {
+                waitingQueue.addLast(request);
+            }
         }
 
         /**
@@ -99,7 +108,17 @@ public class LockManager {
             Iterator<LockRequest> requests = waitingQueue.iterator();
 
             // TODO(proj4_part1): implement
-            return;
+            while(requests.hasNext()) {
+                LockRequest lr = requests.next();
+                // 这里假定同一个 transaction，对于同一个 resource 的锁不管如何，可以直接 update 上去
+                if (checkCompatible(lr.lock.lockType, lr.lock.transactionNum)){
+                    grantOrUpdateLock(lr.lock);
+                    // 这样子操作会不会出问题？
+                    waitingQueue.removeFirst();
+                } else {
+                    break;
+                }
+            }
         }
 
         /**
@@ -107,6 +126,9 @@ public class LockManager {
          */
         public LockType getTransactionLockType(long transaction) {
             // TODO(proj4_part1): implement
+            for(Lock lk : locks) {
+                if(lk.transactionNum == transaction) return lk.lockType;
+            }
             return LockType.NL;
         }
 
@@ -187,7 +209,29 @@ public class LockManager {
         // synchronized block elsewhere if you wish.
         boolean shouldBlock = false;
         synchronized (this) {
-            
+            List<Lock> lks = getLocks(name);
+            for(Lock lk : lks) {
+                if(lk.transactionNum == transaction.getTransNum())
+                    throw new DuplicateLockRequestException("This transaction has already acquire a lock on the resource!");
+            }
+
+            ResourceEntry entry = getResourceEntry(name);
+            // 先把等待队列里的进行更新，
+            entry.processQueue();
+            if(!entry.checkCompatible(lockType, transaction.getTransNum())) {
+                // transaction blocked
+                shouldBlock = true;
+                LockRequest request = new LockRequest(transaction, new Lock(name, lockType, transaction.getTransNum()));
+                entry.addToQueue(request, false);
+            } else {
+                // 如果已经上的锁中有这个transaction的，就可以直接grantOrUpdateLock
+                // 否则，需要排入队列再议
+                // 如果等待队列里存在同一个 transaction 的两个 lock，要怎么处理呢？
+                entry.grantOrUpdateLock(new Lock(name, lockType, transaction.getTransNum()));
+                entry.processQueue();
+            }
+
+
         }
         if (shouldBlock) {
             transaction.block();
