@@ -72,8 +72,13 @@ public class LockManager {
          */
         public void grantOrUpdateLock(Lock lock) {
             // TODO(proj4_part1): implement
-            locks.removeIf(lk -> Objects.equals(lk.transactionNum, lock.transactionNum));
-            locks.add(lock);
+            // locks.removeIf(lk -> Objects.equals(lk.transactionNum, lock.transactionNum));
+            // locks.add(lock);
+            for(Lock lk : locks) {
+                if(lk.transactionNum == lock.transactionNum) {
+                    lk.lockType = lock.lockType;
+                }
+            }
         }
 
         /**
@@ -211,28 +216,33 @@ public class LockManager {
         synchronized (this) {
             List<Lock> lks = getLocks(name);
             for(Lock lk : lks) {
-                if(lk.transactionNum == transaction.getTransNum())
+                if (lk.transactionNum == transaction.getTransNum()) {
+                    // 这个异常为什么需要抛出？不是可以直接 update 上去的吗？
+                    // 应该是因为无法隐式转换的缘故，需要显示调用才行
                     throw new DuplicateLockRequestException("This transaction has already acquire a lock on the resource!");
+                }
             }
 
             ResourceEntry entry = getResourceEntry(name);
-            // 先把等待队列里的进行更新，
-            entry.processQueue();
-            if(!entry.checkCompatible(lockType, transaction.getTransNum())) {
+            // 先处理等待队列里的锁
+            // entry.processQueue();
+            if(!entry.checkCompatible(lockType, transaction.getTransNum()) || entry.waitingQueue.size() > 0) {
                 // transaction blocked
                 shouldBlock = true;
                 LockRequest request = new LockRequest(transaction, new Lock(name, lockType, transaction.getTransNum()));
                 entry.addToQueue(request, false);
             } else {
-                // 如果已经上的锁中有这个transaction的，就可以直接grantOrUpdateLock
-                // 否则，需要排入队列再议
+                // 到这儿具备的条件：
+                // 1. 该 resource 现在所有的上的 lock 都是可以和 LockType 兼容的（不涉及锁升级）  或者  该 resource 现在并不拥有锁
+                // 2. 在 waitingQueue 中没有有其他 transaction 在等待
                 // 如果等待队列里存在同一个 transaction 的两个 lock，要怎么处理呢？
                 entry.grantOrUpdateLock(new Lock(name, lockType, transaction.getTransNum()));
-                entry.processQueue();
+                // entry.processQueue();
             }
 
-
         }
+
+        // 为什么把这个放在 synchronized 外面？
         if (shouldBlock) {
             transaction.block();
         }
@@ -253,8 +263,18 @@ public class LockManager {
         // TODO(proj4_part1): implement
         // You may modify any part of this method.
         synchronized (this) {
-            
+            List<Lock> resourceLks = getLocks(name);
+            boolean noLockHeld = true;
+            for(Lock lk : resourceLks) {
+                if(lk.transactionNum == transaction.getTransNum()) {
+                    noLockHeld = false;
+                    resourceLks.remove(lk);
+                    break;
+                }
+            }
+            if(noLockHeld) throw new NoLockHeldException("This transaction has no lock on the resource!");
         }
+        // 在 release 被调用后，resource 的请求队列应该被处理
     }
 
     /**
@@ -285,7 +305,50 @@ public class LockManager {
         // You may modify any part of this method.
         boolean shouldBlock = false;
         synchronized (this) {
-            
+            List<Lock> resourceLks = getLocks(name);
+            Lock desLock = null;
+            for(Lock lk : resourceLks) {
+                if (lk.transactionNum == transaction.getTransNum() && lk.lockType == newLockType) {
+                    throw new DuplicateLockRequestException("This transaction has already acquire a same type lock on the resource!");
+                }
+                if (lk.transactionNum == transaction.getTransNum()) {
+                    desLock = lk;
+                }
+            }
+            if(desLock == null) {
+                throw new NoLockHeldException("This transaction hasn't have a lock on the resource!");
+            }
+            if(!LockType.substitutable(newLockType, desLock.lockType) || newLockType != desLock.lockType) {
+                throw new InvalidLockException("This new lock ca not substitute the old one!");
+            }
+
+            ResourceEntry entry = getResourceEntry(name);
+            // 先处理等待队列里的锁
+            // entry.processQueue();
+
+            if(!entry.checkCompatible(newLockType, transaction.getTransNum())) {
+                // 到这儿具备的条件：
+                // 1. 该 resource 包含一个该 transaction 的 lock
+                // 2. 该 resource 现在所有的上的 lock 有和 LockType 不兼容的
+                shouldBlock = true;
+                LockRequest request = new LockRequest(transaction, new Lock(name, newLockType, transaction.getTransNum()));
+                entry.addToQueue(request, true);
+            } else {
+                // 到这儿具备的条件：
+                // 1. 该 resource 包含一个该 transaction 的 lock
+                // 2. 该 resource 现在所有的上的 lock 都是可以和 LockType 兼容的
+                entry.grantOrUpdateLock(new Lock(name, newLockType, transaction.getTransNum()));
+                // entry.processQueue();
+                // transaction 中记录的 locks 也需要进行更新
+                List<Lock> transactionLks = getLocks(transaction);
+                for(Lock lk : transactionLks) {
+                    // transactionLks 的含义是什么？
+                    // 被该 transaction 掌控的 locks
+                    if(lk.name == name) {
+                        lk.lockType = newLockType;
+                    }
+                }
+            }
         }
         if (shouldBlock) {
             transaction.block();
