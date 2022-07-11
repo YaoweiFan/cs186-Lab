@@ -167,12 +167,12 @@ public class LockManager {
      * FRONT of the resource's queue.
      *
      * Locks on `releaseNames` should be released only after the requested lock
-     * has been acquired. The corresponding queues should be processed.
+     * has been acquired. The corresponding queues should be processed.     // 这个在这里要如何实现呢？
      *
      * An acquire-and-release that releases an old lock on `name` should NOT
      * change the acquisition time of the lock on `name`, i.e. if a transaction
      * acquired locks in the order: S(A), X(B), acquire X(A) and release S(A),
-     * the lock on A is considered to have been acquired before the lock on B.
+     * the lock on A is considered to have been acquired before the lock on B.  // 这么处理的目的是什么呢？
      *
      * @throws DuplicateLockRequestException if a lock on `name` is already held
      * by `transaction` and isn't being released
@@ -188,7 +188,51 @@ public class LockManager {
         // move the synchronized block elsewhere if you wish.
         boolean shouldBlock = false;
         synchronized (this) {
-            
+            List<Lock> resourceLks = getLocks(name);
+            for (Lock lk : resourceLks) {
+                if (lk.transactionNum == transaction.getTransNum()) {
+                    throw new DuplicateLockRequestException("This transaction has already acquire a lock on the resource!");
+                }
+            }
+            List<Lock> transactionLks = getLocks(transaction);
+            boolean noLockHeld = true;
+            for(Lock lk : transactionLks) {
+                if (releaseNames.contains(lk.name)) {
+                    noLockHeld = false;
+                }
+            }
+            if (noLockHeld) throw new NoLockHeldException("This transaction doesn't hold a lock on one or more of the resource!");
+
+            // 为什么这里要把请求放在队列的前面？
+            // 应该是这个函数的特质（支持后续的实现），在 project guide 中有比较好的说明
+            // 那么为什么要有这样的特质呢？
+
+            ResourceEntry entry = getResourceEntry(name);
+            if(!entry.checkCompatible(lockType, transaction.getTransNum())) {
+                // transaction blocked
+                shouldBlock = true;
+                LockRequest request = new LockRequest(transaction, new Lock(name, lockType, transaction.getTransNum()));
+                entry.addToQueue(request, true);
+            } else {
+                // 只要是 compatible 的就可以直接 grant lock
+                // entry 的 locks 中不会有相同 transaction 和 resourceName 的 lock (如果有的话在前面检测的时候就会抛出异常)
+                // entry 的 waitingQueue 中会不会有呢？
+                // transactionLks 中会不会有呢？ -- 假设没有（我现在认为 transactionLks 中的锁全都是已经上了的，不在等待队列中）
+                entry.grantOrUpdateLock(new Lock(name, lockType, transaction.getTransNum()));
+                // 这个地方是应该创建一个新的 lock 还是只用浅拷贝？
+                transactionLks.add(new Lock(name, lockType, transaction.getTransNum()));
+                // 释放锁
+                for(Lock lk : transactionLks) {
+                    // 考虑 releaseNames 中的 lock 可能是其他 transaction 的，虽然不知道会不会有这种可能？
+                    if(releaseNames.contains(lk.name)) {
+                        // 释放 transaction 中的锁
+                        transactionLks.remove(lk);
+                        // 把对应的 resource 中的对应 lock 也释放
+                        ResourceEntry currEntry = getResourceEntry(lk.name);
+                        currEntry.releaseLock(lk);
+                    }
+                }
+            }
         }
         if (shouldBlock) {
             transaction.block();
@@ -238,6 +282,9 @@ public class LockManager {
                 // 如果等待队列里存在同一个 transaction 的两个 lock，要怎么处理呢？
                 entry.grantOrUpdateLock(new Lock(name, lockType, transaction.getTransNum()));
                 // entry.processQueue();
+                // transaction 也获取相同的 lock
+                List<Lock> transactionLks = getLocks(transaction);
+                transactionLks.add(new Lock(name, lockType, transaction.getTransNum()));
             }
 
         }
@@ -273,6 +320,9 @@ public class LockManager {
                 }
             }
             if(noLockHeld) throw new NoLockHeldException("This transaction has no lock on the resource!");
+
+            List<Lock> transactionLks = getLocks(transaction);
+            transactionLks.removeIf(lk->Objects.equals(lk.name, name));
         }
         // 在 release 被调用后，resource 的请求队列应该被处理
     }
@@ -361,7 +411,10 @@ public class LockManager {
      */
     public synchronized LockType getLockType(TransactionContext transaction, ResourceName name) {
         // TODO(proj4_part1): implement
-        ResourceEntry resourceEntry = getResourceEntry(name);
+        List<Lock> lks = getLocks(name);
+        for (Lock lk : lks) {
+            if (lk.transactionNum == transaction.getTransNum()) return lk.lockType;
+        }
         return LockType.NL;
     }
 
