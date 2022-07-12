@@ -96,7 +96,13 @@ public class LockContext {
     public void acquire(TransactionContext transaction, LockType lockType)
             throws InvalidLockException, DuplicateLockRequestException {
         // TODO(proj4_part2): implement
+        // 检查 request 是否合法
+        // 子孙资源的锁请求是否与祖先资源以上上的锁发生冲突
+        LockType.canBeParentLock(parent.getEffectiveLockType(), lockType)
 
+
+        // lockManager 会检查是否有其他 transaction 的 lock 与本请求冲突
+        lockman.acquire(transaction, name, lockType);
         return;
     }
 
@@ -190,6 +196,11 @@ public class LockContext {
     public LockType getExplicitLockType(TransactionContext transaction) {
         if (transaction == null) return LockType.NL;
         // TODO(proj4_part2): implement
+        List<Lock> transactionLks = lockman.getLocks(transaction);
+        for(Lock lk : transactionLks) {
+            // 遇到这一层级资源的锁就返回该锁的类型
+            if(lk.name == name) return lk.lockType;
+        }
         return LockType.NL;
     }
 
@@ -202,6 +213,7 @@ public class LockContext {
     public LockType getEffectiveLockType(TransactionContext transaction) {
         if (transaction == null) return LockType.NL;
         // TODO(proj4_part2): implement
+
         return LockType.NL;
     }
 
@@ -213,6 +225,17 @@ public class LockContext {
      */
     private boolean hasSIXAncestor(TransactionContext transaction) {
         // TODO(proj4_part2): implement
+        Iterator<String> names = name.getNames().iterator();
+        LockContext ctx;
+        String n = names.next();
+        ctx = lockman.context(n);
+        if(ctx.getResourceName() == name) return false;
+        while (names.hasNext()) {
+            n = names.next();
+            ctx = ctx.childContext(n);
+            if(ctx.getResourceName() == name) break;
+            if(lockman.getLockType(transaction, ctx.getResourceName()) == LockType.SIX) return true;
+        }
         return false;
     }
 
