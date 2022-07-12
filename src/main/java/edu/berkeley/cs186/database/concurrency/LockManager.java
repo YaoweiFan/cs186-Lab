@@ -1,5 +1,6 @@
 package edu.berkeley.cs186.database.concurrency;
 
+import edu.berkeley.cs186.database.Transaction;
 import edu.berkeley.cs186.database.TransactionContext;
 
 import java.util.*;
@@ -74,11 +75,15 @@ public class LockManager {
             // TODO(proj4_part1): implement
             // locks.removeIf(lk -> Objects.equals(lk.transactionNum, lock.transactionNum));
             // locks.add(lock);
+            boolean hasSameTransaction = false;
             for(Lock lk : locks) {
                 if(lk.transactionNum == lock.transactionNum) {
                     lk.lockType = lock.lockType;
+                    hasSameTransaction = true;
+                    break;
                 }
             }
+            if(!hasSameTransaction) locks.add(lock);
         }
 
         /**
@@ -120,6 +125,7 @@ public class LockManager {
                     grantOrUpdateLock(lr.lock);
                     // 这样子操作会不会出问题？
                     waitingQueue.removeFirst();
+                    lr.transaction.unblock();
                 } else {
                     break;
                 }
@@ -211,6 +217,9 @@ public class LockManager {
             if(!entry.checkCompatible(lockType, transaction.getTransNum())) {
                 // transaction blocked
                 shouldBlock = true;
+                // 调用以下方法的原因是为了避免 race condition：the transaction may be dequeued between the time
+                // it leaves the synchronized block and the time it actually blocks.
+                transaction.prepareBlock();
                 LockRequest request = new LockRequest(transaction, new Lock(name, lockType, transaction.getTransNum()));
                 entry.addToQueue(request, true);
             } else {
@@ -220,13 +229,13 @@ public class LockManager {
                 // transactionLks 中会不会有呢？ -- 假设没有（我现在认为 transactionLks 中的锁全都是已经上了的，不在等待队列中）
                 entry.grantOrUpdateLock(new Lock(name, lockType, transaction.getTransNum()));
                 // 这个地方是应该创建一个新的 lock 还是只用浅拷贝？
-                transactionLks.add(new Lock(name, lockType, transaction.getTransNum()));
+                addLocks(transaction, new Lock(name, lockType, transaction.getTransNum()));
                 // 释放锁
                 for(Lock lk : transactionLks) {
                     // 考虑 releaseNames 中的 lock 可能是其他 transaction 的，虽然不知道会不会有这种可能？
                     if(releaseNames.contains(lk.name)) {
                         // 释放 transaction 中的锁
-                        transactionLks.remove(lk);
+                        removeLocks(transaction, lk);
                         // 把对应的 resource 中的对应 lock 也释放
                         ResourceEntry currEntry = getResourceEntry(lk.name);
                         currEntry.releaseLock(lk);
@@ -273,6 +282,9 @@ public class LockManager {
             if(!entry.checkCompatible(lockType, transaction.getTransNum()) || entry.waitingQueue.size() > 0) {
                 // transaction blocked
                 shouldBlock = true;
+                // 调用以下方法的原因是为了避免 race condition：the transaction may be dequeued between the time
+                // it leaves the synchronized block and the time it actually blocks.
+                transaction.prepareBlock();
                 LockRequest request = new LockRequest(transaction, new Lock(name, lockType, transaction.getTransNum()));
                 entry.addToQueue(request, false);
             } else {
@@ -283,13 +295,14 @@ public class LockManager {
                 entry.grantOrUpdateLock(new Lock(name, lockType, transaction.getTransNum()));
                 // entry.processQueue();
                 // transaction 也获取相同的 lock
-                List<Lock> transactionLks = getLocks(transaction);
-                transactionLks.add(new Lock(name, lockType, transaction.getTransNum()));
+                addLocks(transaction, new Lock(name, lockType, transaction.getTransNum()));
             }
 
         }
 
         // 为什么把这个放在 synchronized 外面？
+        // 如果一个 transaction 的线程在 synchronized block 中阻塞，那么其它线程就无法访问 LockManger 直到其解除阻塞，但是这没有可能，
+        // 因为 LockManager 是唯一可以解除阻塞的途径
         if (shouldBlock) {
             transaction.block();
         }
@@ -310,21 +323,24 @@ public class LockManager {
         // TODO(proj4_part1): implement
         // You may modify any part of this method.
         synchronized (this) {
-            List<Lock> resourceLks = getLocks(name);
+            ResourceEntry entry = getResourceEntry(name);
             boolean noLockHeld = true;
-            for(Lock lk : resourceLks) {
+            for(Lock lk : entry.locks) {
                 if(lk.transactionNum == transaction.getTransNum()) {
                     noLockHeld = false;
-                    resourceLks.remove(lk);
+                    entry.releaseLock(lk);
                     break;
                 }
             }
             if(noLockHeld) throw new NoLockHeldException("This transaction has no lock on the resource!");
 
             List<Lock> transactionLks = getLocks(transaction);
-            transactionLks.removeIf(lk->Objects.equals(lk.name, name));
+            for(Lock lk : transactionLks) {
+                if(lk.name == name) removeLocks(transaction, lk);
+            }
+            // 在 release 被调用后，resource 的请求队列应该被处理
+            entry.processQueue();
         }
-        // 在 release 被调用后，resource 的请求队列应该被处理
     }
 
     /**
@@ -381,6 +397,9 @@ public class LockManager {
                 // 1. 该 resource 包含一个该 transaction 的 lock
                 // 2. 该 resource 现在所有的上的 lock 有和 LockType 不兼容的
                 shouldBlock = true;
+                // 调用以下方法的原因是为了避免 race condition：the transaction may be dequeued between the time
+                // it leaves the synchronized block and the time it actually blocks.
+                transaction.prepareBlock();
                 LockRequest request = new LockRequest(transaction, new Lock(name, newLockType, transaction.getTransNum()));
                 entry.addToQueue(request, true);
             } else {
@@ -390,14 +409,7 @@ public class LockManager {
                 entry.grantOrUpdateLock(new Lock(name, newLockType, transaction.getTransNum()));
                 // entry.processQueue();
                 // transaction 中记录的 locks 也需要进行更新
-                List<Lock> transactionLks = getLocks(transaction);
-                for(Lock lk : transactionLks) {
-                    // transactionLks 的含义是什么？
-                    // 被该 transaction 掌控的 locks
-                    if(lk.name == name) {
-                        lk.lockType = newLockType;
-                    }
-                }
+                promoteLocks(transaction, name, newLockType);
             }
         }
         if (shouldBlock) {
@@ -431,6 +443,31 @@ public class LockManager {
     public synchronized List<Lock> getLocks(TransactionContext transaction) {
         return new ArrayList<>(transactionLocks.getOrDefault(transaction.getTransNum(),
                 Collections.emptyList()));
+    }
+
+    public synchronized void addLocks(TransactionContext transaction, Lock lock) {
+        if(transactionLocks.containsKey(transaction.getTransNum())) {
+            transactionLocks.get(transaction.getTransNum()).add(lock);
+        } else {
+            List<Lock> value = new ArrayList<>();
+            value.add(lock);
+            transactionLocks.put(transaction.getTransNum(), value);
+        }
+    }
+
+    public synchronized void removeLocks(TransactionContext transaction, Lock lock) {
+        transactionLocks.get(transaction.getTransNum()).remove(lock);
+    }
+
+    public synchronized void promoteLocks(TransactionContext transaction, ResourceName name, LockType newLockType) {
+        List<Lock> transactionLks = transactionLocks.get(transaction.getTransNum());
+        for(Lock lk : transactionLks) {
+            // transactionLks 的含义是什么？
+            // 被该 transaction 掌控的 locks
+            if(lk.name == name) {
+                lk.lockType = newLockType;
+            }
+        }
     }
 
     /**
