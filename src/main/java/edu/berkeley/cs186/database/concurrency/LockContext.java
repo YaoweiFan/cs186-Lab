@@ -98,8 +98,14 @@ public class LockContext {
         // TODO(proj4_part2): implement
         // 检查 request 是否合法
         // 子孙资源的锁请求是否与祖先资源以上上的锁发生冲突
-        LockType.canBeParentLock(parent.getEffectiveLockType(), lockType)
-
+        // 以下是 project guide 中列举的两种情况
+        // 以下情况不可以放在 waitingqueue 中等一等吗?
+        if(LockType.canBeParentLock(parent.getEffectiveLockType(transaction), lockType)) {
+            throw new InvalidLockException("The request is invalid!");
+        }
+        if(hasSIXAncestor(transaction) && (lockType == LockType.IS || lockType == LockType.S)) {
+            throw new InvalidLockException("It is redundant for the transaction to have an IS/S lock on the resource!");
+        }
 
         // lockManager 会检查是否有其他 transaction 的 lock 与本请求冲突
         lockman.acquire(transaction, name, lockType);
