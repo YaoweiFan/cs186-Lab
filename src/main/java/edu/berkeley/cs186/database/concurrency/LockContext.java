@@ -185,8 +185,33 @@ public class LockContext {
      */
     public void escalate(TransactionContext transaction) throws NoLockHeldException {
         // TODO(proj4_part2): implement
+        boolean noLockHeld = true;
+        for (Lock lk : lockman.getLocks(name)) {
+            if(lk.transactionNum == transaction.getTransNum()) {
+                noLockHeld = false;
+            }
+        }
+        if(noLockHeld) throw new NoLockHeldException("This transaction has no lock at this level!");
+        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
 
-        return;
+        int num = getNumChildren(transaction);
+
+        // 检查子孙资源是否只上了 S/IS
+        if (recursiveCheckSisDescendants(this, transaction)) {
+            // 只上了 S/IS
+            List<ResourceName> resourceNames = sisDescendants(transaction);
+            num -= resourceNames.size();
+            lockman.acquireAndRelease(transaction, name, LockType.S, resourceNames);
+        } else {
+            // 不只上了 S/IS
+            List<ResourceName> resourceNames = recursiveGetLockDescendants(this, transaction);
+            num -= resourceNames.size();
+            lockman.acquireAndRelease(transaction, name, LockType.X, resourceNames);
+        }
+        // 更新 numChildLocks
+        if (numChildLocks.containsKey(transaction.getTransNum())) {
+            numChildLocks.put(transaction.getTransNum(), num);
+        }
     }
 
     /**
@@ -213,8 +238,26 @@ public class LockContext {
     public LockType getEffectiveLockType(TransactionContext transaction) {
         if (transaction == null) return LockType.NL;
         // TODO(proj4_part2): implement
+        // 假设在资源层级关系满足 canBeParentLock 条件
+        // 得到本资源的 LockType
+        LockType selfLockType = LockType.NL;
+        List<Lock> lks = lockman.getLocks(name);
+        for(Lock lk : lks) {
+            if(lk.transactionNum == transaction.getTransNum()) {
+                selfLockType = lk.lockType;
+                // 如果有显示的，就直接返回显示的 LockType
+                return selfLockType;
+            }
+        }
 
-        return LockType.NL;
+        // 如果一直追溯到 database 都没有持有该 transaction 的锁，表明无锁
+        if(parent == null) return LockType.NL;
+        // 得到祖先资源的 LockType
+        LockType parentLockType = parent.getExplicitLockType(transaction);
+        // 几种 intent lock 需要处理一下
+        if(parentLockType == LockType.IS || parentLockType == LockType.IX) return LockType.NL;
+        if(parentLockType == LockType.SIX) return LockType.S;
+        return parentLockType;
     }
 
     /**
@@ -232,11 +275,36 @@ public class LockContext {
         if(ctx.getResourceName() == name) return false;
         while (names.hasNext()) {
             n = names.next();
+            // 有没有直接通过 name(String) 获取 resource 的方法？
+            // ("database", "someTable", 10)
+            // 从形式上看应该没有
             ctx = ctx.childContext(n);
             if(ctx.getResourceName() == name) break;
             if(lockman.getLockType(transaction, ctx.getResourceName()) == LockType.SIX) return true;
         }
         return false;
+    }
+
+    /**
+     * 递归检查子资源是否上有除了 S/IS 之外的锁
+     * @param lockContext the given lockContext
+     * @param transaction the given transaction
+     * @return true 没有除了 S/IS 之外的锁
+     */
+    private boolean recursiveCheckSisDescendants(LockContext lockContext, TransactionContext transaction) {
+        for (Lock lk : lockman.getLocks(lockContext.name)) {
+            if(lk.transactionNum == transaction.getTransNum()) {
+                if(lk.lockType != LockType.S && lk.lockType != LockType.IS) {
+                    return false;
+                }
+            }
+        }
+        for(Map.Entry<String, LockContext> entry : lockContext.children.entrySet()) {
+            if(!recursiveCheckSisDescendants(entry.getValue(), transaction)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -248,7 +316,54 @@ public class LockContext {
      */
     private List<ResourceName> sisDescendants(TransactionContext transaction) {
         // TODO(proj4_part2): implement
-        return new ArrayList<>();
+        List<ResourceName> res = new ArrayList<>();
+        for(Map.Entry<String, LockContext> entry : children.entrySet()) {
+            res.addAll(recursiveGetSisDescendants(entry.getValue(), transaction));
+        }
+        return res;
+    }
+
+    /**
+     * 浅拷贝方式递归获取上了 S 或 IS 锁的子孙资源的 ResourceName
+     * @param lockContext the given lockContext
+     * @param transaction the given transaction
+     * @return a list of ResourceNames of descendants which the transaction
+     * holds an S or IS lock.
+     */
+    private List<ResourceName> recursiveGetSisDescendants(LockContext lockContext, TransactionContext transaction) {
+        List<ResourceName> res = new ArrayList<>();
+        for (Lock lk : lockman.getLocks(lockContext.name)) {
+            if(lk.transactionNum == transaction.getTransNum()) {
+                if(lk.lockType == LockType.S || lk.lockType == LockType.IS) {
+                    res.add(lockContext.name);
+                    break;
+                }
+            }
+        }
+        for(Map.Entry<String, LockContext> entry : lockContext.children.entrySet()) {
+            res.addAll(recursiveGetSisDescendants(entry.getValue(), transaction));
+        }
+        return res;
+    }
+
+    /**
+     *
+     * @param lockContext the given lockContext
+     * @param transaction the given transaction
+     * @return a list of ResourceNames of descendants which the transaction holds a lock
+     */
+    private List<ResourceName> recursiveGetLockDescendants(LockContext lockContext, TransactionContext transaction) {
+        List<ResourceName> res = new ArrayList<>();
+        for (Lock lk : lockman.getLocks(lockContext.name)) {
+            if(lk.transactionNum == transaction.getTransNum()) {
+                res.add(lockContext.name);
+                break;
+            }
+        }
+        for(Map.Entry<String, LockContext> entry : lockContext.children.entrySet()) {
+            res.addAll(recursiveGetSisDescendants(entry.getValue(), transaction));
+        }
+        return res;
     }
 
     /**
