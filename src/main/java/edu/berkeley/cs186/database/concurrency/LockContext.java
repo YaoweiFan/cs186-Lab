@@ -96,20 +96,25 @@ public class LockContext {
     public void acquire(TransactionContext transaction, LockType lockType)
             throws InvalidLockException, DuplicateLockRequestException {
         // TODO(proj4_part2): implement
-        // 检查 request 是否合法
-        // 子孙资源的锁请求是否与祖先资源以上上的锁发生冲突
-        // 以下是 project guide 中列举的两种情况
-        // 以下情况不可以放在 waitingqueue 中等一等吗?
+        // 检查 request 是否合法，子孙资源的锁请求是否与祖先资源以上上的锁发生冲突，以下是 project guide 中列举的两种情况
         if(LockType.canBeParentLock(parent.getEffectiveLockType(transaction), lockType)) {
+            // 这种情况不可以放在 waitingQueue 中等一等吗?
             throw new InvalidLockException("The request is invalid!");
         }
         if(hasSIXAncestor(transaction) && (lockType == LockType.IS || lockType == LockType.S)) {
             throw new InvalidLockException("It is redundant for the transaction to have an IS/S lock on the resource!");
         }
+        // 检查锁该transaction是否已经在该资源上上了锁
+        for(Lock lk : lockman.getLocks(name)) {
+            if(lk.transactionNum == transaction.getTransNum()) throw new DuplicateLockRequestException("A lock is already held by the transaction on the resource!");
+        }
+        // 检查该 context 是否只是只读的？
+        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
 
         // lockManager 会检查是否有其他 transaction 的 lock 与本请求冲突
         lockman.acquire(transaction, name, lockType);
-        return;
+        // 更新 numChildLocks
+        numChildLocks.put(transaction.getTransNum(), lockman.getLocks(transaction).size());
     }
 
     /**
@@ -126,8 +131,33 @@ public class LockContext {
     public void release(TransactionContext transaction)
             throws NoLockHeldException, InvalidLockException {
         // TODO(proj4_part2): implement
+        // 检查 transaction 是否持有锁
+        boolean noLockHeld = true;
+        for(Lock lk : lockman.getLocks(transaction)) {
+            if(lk.name == name) {
+                noLockHeld = false;
+                break;
+            }
+        }
+        if(noLockHeld) throw new NoLockHeldException("No lock on this resource is held by the transaction！");
+        // 检查该 lock 是否可已被释放
+        for(Lock lk : lockman.getLocks(transaction)) {
+            for(Map.Entry<String, LockContext> entry : children.entrySet()) {
+                if(entry.getValue().name == lk.name) {
+                    // 如果子资源有被 transaction lock 过，需要判断 这个lock 是否限制了 本资源lock 的释放
+                    if(!LockType.canBeParentLock(LockType.NL, entry.getValue().getExplicitLockType(transaction))) {
+                        throw new InvalidLockException("The lock cannot be released because doing so " +
+                                                            "would violate multigranularity locking constraints!");
+                    }
+                }
+            }
+        }
+        // 检查该 context 是否只是只读的？
+        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
 
-        return;
+        lockman.release(transaction, name);
+        // 更新 numChildLocks
+        numChildLocks.put(transaction.getTransNum(), lockman.getLocks(transaction).size());
     }
 
     /**
@@ -152,8 +182,17 @@ public class LockContext {
     public void promote(TransactionContext transaction, LockType newLockType)
             throws DuplicateLockRequestException, NoLockHeldException, InvalidLockException {
         // TODO(proj4_part2): implement
+        // 检查锁该transaction是否已经在该资源上上了锁
+        for(Lock lk : lockman.getLocks(name)) {
+            if(lk.transactionNum == transaction.getTransNum() && lk.lockType == newLockType) {
+                throw new DuplicateLockRequestException("A same type lock is already held by the transaction on the resource!");
+            }
+        }
 
-        return;
+
+        lockman.promote(transaction, name, newLockType);
+        // 更新 numChildLocks
+        numChildLocks.put(transaction.getTransNum(), lockman.getLocks(transaction).size());
     }
 
     /**
