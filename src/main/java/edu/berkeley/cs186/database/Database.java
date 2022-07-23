@@ -931,8 +931,13 @@ public class Database implements AutoCloseable {
         public void close() {
             try {
                 // TODO(proj4_part2)
-                // 从下到上释放锁
-                return;
+                // 按照与获取顺序相反的顺序释放锁
+                TransactionContext transaction = TransactionContext.getTransaction();
+                // lockManager.getLocks() 函数的注释上有说明锁是按照获取顺序排列的
+                List<Lock> acquiredLocks = lockManager.getLocks(transaction);
+                for (int i = acquiredLocks.size() - 1; i >= 0; i--) {
+                    LockContext.fromResourceName(lockManager, acquiredLocks.get(i).name).release(transaction);
+                }
             } catch (Exception e) {
                 // There's a chance an error message from your release phase
                 // logic can get suppressed. This guarantees that the stack
