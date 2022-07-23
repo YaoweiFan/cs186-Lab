@@ -37,60 +37,53 @@ public class LockUtil {
         if (transaction == null || lockContext == null) return;
 
         // You may find these variables useful
-//        LockContext parentContext = lockContext.parentContext();
+        // LockContext parentContext = lockContext.parentContext();
         LockType effectiveLockType = lockContext.getEffectiveLockType(transaction);
         LockType explicitLockType = lockContext.getExplicitLockType(transaction);
 
         // TODO(proj4_part2): implement
         // Phase1: Ensuring that we have the appropriate locks on ancestors
         // Phase2: Acquiring the lock on the resource
-        if(LockType.substitutable(effectiveLockType, requestType)) {
-            // effectiveLockType 不会是 intend lock
-            // 这种情况下应该不需要做什么吧
-            return;
-        }
+        if(requestType == LockType.NL) return;
+
+        // effectiveLockType 不会是 intend lock
+        // 这种情况下应该不需要做什么吧，连本资源的锁也不上
+        if(LockType.substitutable(effectiveLockType, requestType)) return;
         // 执行到这儿说明需要进一步争取资源了
         if(explicitLockType == LockType.IX && requestType == LockType.S) {
             lockContext.promote(transaction, LockType.SIX);
         }
         if(explicitLockType == LockType.IS || explicitLockType == LockType.IX || explicitLockType == LockType.SIX) {
             // 这种情况下当前锁是 intent lock，就意味着子资源可能还上有锁
-
+            lockContext.escalate(transaction);
+            // 这时候当前的锁只有可能是 S 或 X
+            if(LockType.substitutable(lockContext.getExplicitLockType(transaction), requestType)) return;
+            // escalate 后把有影响的锁更新一下
+            effectiveLockType = lockContext.getEffectiveLockType(transaction);
+            explicitLockType = lockContext.getExplicitLockType(transaction);
         }
         // 执行到这里，explicitLockType 只可能是 S 或 NL，而且 requestType 只可能是 X 或 S、X
-        if(explicitLockType == LockType.NL) {
+        upToUpdateLocks(lockContext, requestType, transaction);
 
-        }
-
-        // 向上追溯 escalate
-        LockContext currContext = lockContext;
-        LockContext parentContext = currContext.parentContext();
-        while(parentContext != null && !LockType.substitutable(parentContext.getEffectiveLockType(transaction), requestType)) {
-            currContext = currContext.parentContext();
-
-        }
-        if(parentContext == null) {
-            // 最高层级的资源上的锁需要 promote
-            // 如果只是 promote 的话需要从上到下逐级 promote
-            currContext.escalate(transaction);
-            currContext.promote(transaction, requestType);
-            // currContext.acquire(transaction, requestType);
-        } else {
-            // 当前级资源上的锁需要 promote
-            parentContext.escalate(transaction);
-        }
-
-
-        if( == LockType.S && requestType == LockType.X) {
-            // lockContext.promote 如果待提升的锁类型与祖先资源上的锁不兼容，不会直接处理，而是会抛出异常
-            lockContext.promote(transaction, requestType);
-            // parent 该如何处理？递归 promote?
-        }
-
-
-        lockContext.promote(transaction, requestType);
 
     }
 
+
     // TODO(proj4_part2) add any helper methods you want
+    private static void upToUpdateLocks(LockContext lockContext, LockType requestType, TransactionContext transaction) {
+        LockContext currContext = lockContext;
+        LockContext parentContext = currContext.parentContext();
+        // 如果是一链串的，上面一定是一系列的 intent lock
+        while(parentContext != null) {
+
+            if(LockType.canBeParentLock(parentContext.getExplicitLockType(transaction), requestType)) {
+                break;
+            }
+            currContext = currContext.parentContext();
+            parentContext = currContext.parentContext();
+        }
+
+        currContext.escalate(transaction);
+        currContext.promote(transaction, requestType);
+    }
 }
