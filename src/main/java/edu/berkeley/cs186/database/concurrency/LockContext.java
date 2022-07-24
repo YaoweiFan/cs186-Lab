@@ -136,7 +136,7 @@ public class LockContext {
         // 检查 transaction 是否持有锁
         boolean noLockHeld = true;
         for(Lock lk : lockman.getLocks(transaction)) {
-            if(lk.name == name) {
+            if(lk.name.equals(name)) {
                 noLockHeld = false;
                 break;
             }
@@ -145,7 +145,7 @@ public class LockContext {
         // 检查该 lock 是否可已被释放
         for(Lock lk : lockman.getLocks(transaction)) {
             for(Map.Entry<String, LockContext> entry : children.entrySet()) {
-                if(entry.getValue().name == lk.name) {
+                if(entry.getValue().name.equals(lk.name)) {
                     // 如果子资源有被 transaction lock 过，需要判断 这个lock 是否限制了 本资源lock 的释放
                     if(!LockType.canBeParentLock(LockType.NL, entry.getValue().getExplicitLockType(transaction))) {
                         throw new InvalidLockException("The lock cannot be released because doing so " +
@@ -218,13 +218,13 @@ public class LockContext {
             // you should simultaneously release all descendant locks of type S/IS,
             // since we disallow having IS/S locks on descendants when a SIX lock is held.
             // 这种 release + acquireAndRelease 的方式没有保证同步，加上 synchronized 又觉得怪怪的
-            synchronized (lockman) {
-                lockman.release(transaction, name);
-                List<ResourceName> releaseNames = sisDescendants(transaction);
-                lockman.acquireAndRelease(transaction, name, LockType.S, releaseNames);
-                // 更新 numChildLocks
-                updateNumChildLocks(transaction, releaseNames);
-            }
+
+            lockman.release(transaction, name);
+            List<ResourceName> releaseNames = sisDescendants(transaction);
+            lockman.acquireAndRelease(transaction, name, LockType.SIX, releaseNames);
+            // 更新 numChildLocks
+            updateNumChildLocks(transaction, releaseNames);
+
         } else {
             lockman.promote(transaction, name, newLockType);
         }
@@ -301,7 +301,7 @@ public class LockContext {
         List<Lock> transactionLks = lockman.getLocks(transaction);
         for(Lock lk : transactionLks) {
             // 遇到这一层级资源的锁就返回该锁的类型
-            if(lk.name == name) return lk.lockType;
+            if(lk.name.equals(name)) return lk.lockType;
         }
         return LockType.NL;
     }
@@ -349,14 +349,14 @@ public class LockContext {
         LockContext ctx;
         String n = names.next();
         ctx = lockman.context(n);
-        if(ctx.getResourceName() == name) return false;
+        if(ctx.getResourceName().equals(name)) return false;
         while (names.hasNext()) {
             n = names.next();
             // 有没有直接通过 name(String) 获取 resource 的方法？
             // ("database", "someTable", 10)
             // 从形式上看应该没有
             ctx = ctx.childContext(n);
-            if(ctx.getResourceName() == name) break;
+            if(ctx.getResourceName().equals(name)) break;
             if(lockman.getLockType(transaction, ctx.getResourceName()) == LockType.SIX) return true;
         }
         return false;
