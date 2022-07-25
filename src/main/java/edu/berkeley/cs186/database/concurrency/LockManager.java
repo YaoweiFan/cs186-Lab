@@ -92,7 +92,7 @@ public class LockManager {
             locks.add(lock);
             // 在该 lock 对应的 transaction 上也相应地添加
             // 这个地方是应该创建一个新的 lock 还是只用浅拷贝？ 这里采用浅拷贝，也就是认为 transactionLocks 和 locks 中相同参数的锁是同一把锁
-            addLocks(lock.transactionNum, lock);
+            addLocksForTransaction(lock.transactionNum, lock);
         }
 
         /**
@@ -218,7 +218,6 @@ public class LockManager {
                 releasedLocks.add(new Lock(releaseName, type, transaction.getTransNum()));
             }
 
-
             if(!entry.checkCompatible(lockType, transaction.getTransNum())) {
                 // 为什么这里要把请求放在队列的前面？ 应该是这个函数的特质（支持后续的实现），在 project guide 中有比较好的说明
                 // 那么为什么要有这样的特质呢？
@@ -287,14 +286,10 @@ public class LockManager {
                 LockRequest request = new LockRequest(transaction, new Lock(name, lockType, transaction.getTransNum()));
                 entry.addToQueue(request, false);
             } else {
-                // 到这儿具备的条件：
-                // 1. 该 resource 现在所有的上的 lock 都是可以和 LockType 兼容的（不涉及锁升级）  或者  该 resource 现在并不拥有锁
-                // 2. 在 waitingQueue 中没有有其他 transaction 在等待
-                // 如果等待队列里存在同一个 transaction 的两个 lock，要怎么处理呢？
                 entry.grantOrUpdateLock(new Lock(name, lockType, transaction.getTransNum()));
                 // entry.processQueue();
                 // transaction 也获取相同的 lock
-                addLocks(transaction.getTransNum(), new Lock(name, lockType, transaction.getTransNum()));
+                // addLocksForTransaction(transaction.getTransNum(), new Lock(name, lockType, transaction.getTransNum()));
             }
 
         }
@@ -444,7 +439,7 @@ public class LockManager {
                 Collections.emptyList()));
     }
 
-    public synchronized void addLocks(long transactionNum, Lock lock) {
+    public synchronized void addLocksForTransaction(long transactionNum, Lock lock) {
         if(transactionLocks.containsKey(transactionNum)) {
             transactionLocks.get(transactionNum).add(lock);
         } else {

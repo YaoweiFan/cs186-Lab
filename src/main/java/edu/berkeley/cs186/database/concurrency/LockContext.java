@@ -98,7 +98,7 @@ public class LockContext {
             throws InvalidLockException, DuplicateLockRequestException {
         // TODO(proj4_part2): implement
         // 检查 request 是否合法，子孙资源的锁请求是否与祖先资源以上上的锁发生冲突，以下是 project guide 中列举的两种情况
-        if(LockType.canBeParentLock(parent.getEffectiveLockType(transaction), lockType)) {
+        if(parent!=null && LockType.canBeParentLock(parent.getEffectiveLockType(transaction), lockType)) {
             // 这种情况不可以放在 waitingQueue 中等一等吗?
             throw new InvalidLockException("The request is invalid!");
         }
@@ -106,17 +106,19 @@ public class LockContext {
             throw new InvalidLockException("It is redundant for the transaction to have an IS/S lock on the resource!");
         }
         // 检查锁该transaction是否已经在该资源上上了锁
-        for(Lock lk : lockman.getLocks(name)) {
-            if(lk.transactionNum == transaction.getTransNum()) throw new DuplicateLockRequestException("A lock is already held by the transaction on the resource!");
-        }
+        // 这个在 LockManager 中已经有相关的异常处理片段了
+        //for(Lock lk : lockman.getLocks(name)) {
+        //    if(lk.transactionNum == transaction.getTransNum()) throw new DuplicateLockRequestException("A lock is already held by the transaction on the resource!");
+        //}
         // 检查该 context 是否只是只读的？
         if(readonly) throw new UnsupportedOperationException("The context is readonly!");
 
         // lockManager 会检查是否有其他 transaction 的 lock 与本请求冲突
         lockman.acquire(transaction, name, lockType);
-        // 更新 numChildLocks
-        // 这里好像 numChildLocks 不会有变化
-        // numChildLocks.put(transaction.getTransNum(), lockman.getLocks(transaction).size());
+        // 这里需要更新祖先节点的 numChildLocks
+        List<ResourceName> updateResourceNameList = new ArrayList<>();
+        updateResourceNameList.add(name);
+        updateNumChildLocks(transaction, updateResourceNameList, 1);
     }
 
     /**
@@ -159,8 +161,9 @@ public class LockContext {
 
         lockman.release(transaction, name);
         // 更新 numChildLocks
-        // 这里好像 numChildLocks 不会有变化
-        // numChildLocks.put(transaction.getTransNum(), lockman.getLocks(transaction).size());
+        List<ResourceName> updateResourceNameList = new ArrayList<>();
+        updateResourceNameList.add(name);
+        updateNumChildLocks(transaction, updateResourceNameList, -1);
     }
 
     /**
@@ -204,7 +207,8 @@ public class LockContext {
         if(!LockType.substitutable(newLockType, desLockType)) {
             throw new InvalidLockException("The lock can't be promoted!");
         }
-        if(LockType.canBeParentLock(lockman.getLockType(transaction, parent.name), newLockType)){
+
+        if(parent != null && LockType.canBeParentLock(lockman.getLockType(transaction, parent.name), newLockType)){
             throw new InvalidLockException("The lock on parent resource for this transaction can't be parent of this newLockType!");
         }
         // 检查该 context 是否只是只读的？
@@ -217,13 +221,10 @@ public class LockContext {
             // In the special case of promotion to SIX (from IS/IX/S),
             // you should simultaneously release all descendant locks of type S/IS,
             // since we disallow having IS/S locks on descendants when a SIX lock is held.
-            // 这种 release + acquireAndRelease 的方式没有保证同步，加上 synchronized 又觉得怪怪的
-
-            lockman.release(transaction, name);
             List<ResourceName> releaseNames = sisDescendants(transaction);
             lockman.acquireAndRelease(transaction, name, LockType.SIX, releaseNames);
             // 更新 numChildLocks
-            updateNumChildLocks(transaction, releaseNames);
+            updateNumChildLocks(transaction, releaseNames, -1);
 
         } else {
             lockman.promote(transaction, name, newLockType);
@@ -281,13 +282,13 @@ public class LockContext {
             // 已经有同 transaction、同 resource 的 lock hold 了还能调用这个函数吗？
             lockman.acquireAndRelease(transaction, name, LockType.S, releaseNames);
             // 这个只处理了 release 的部分，但是由于这个 level 本身就有锁，不需要考虑 acquire 的部分
-            updateNumChildLocks(transaction, releaseNames);
+            updateNumChildLocks(transaction, releaseNames, -1);
         } else {
             // 不只上了 S/IS
             List<ResourceName> releaseNames = recursiveGetLockDescendants(this, transaction);
             lockman.acquireAndRelease(transaction, name, LockType.X, releaseNames);
             // 这个只处理了 release 的部分，但是由于这个 level 本身就有锁，不需要考虑 acquire 的部分
-            updateNumChildLocks(transaction, releaseNames);
+            updateNumChildLocks(transaction, releaseNames, -1);
         }
     }
 
@@ -492,11 +493,13 @@ public class LockContext {
      * 更新 numChildLocks
      * 这个方法与 getNumChildren 方法是否有同步的需求？
      */
-    private void updateNumChildLocks(TransactionContext transaction, List<ResourceName> releaseNames) {
+    private void updateNumChildLocks(TransactionContext transaction, List<ResourceName> updateResourceNameList, int change) {
         // 释放锁的 resource 的 parent lockContext 需要减一
-        for(ResourceName currName : releaseNames) {
-            Map<Long, Integer> map = fromResourceName(lockman, currName).parentContext().numChildLocks;
-            map.put(transaction.getTransNum(), map.get(transaction.getTransNum())-1);
+        for(ResourceName currName : updateResourceNameList) {
+            LockContext parentContext = fromResourceName(lockman, currName).parentContext();
+            if(parentContext == null) return;
+            Map<Long, Integer> map = parentContext.numChildLocks;
+            map.put(transaction.getTransNum(), map.get(transaction.getTransNum())+change);
         }
     }
 
