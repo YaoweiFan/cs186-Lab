@@ -37,7 +37,7 @@ public class LockUtil {
         if (transaction == null || lockContext == null) return;
 
         // You may find these variables useful
-        // LockContext parentContext = lockContext.parentContext();
+        LockContext parentContext = lockContext.parentContext();
         LockType effectiveLockType = lockContext.getEffectiveLockType(transaction);
         LockType explicitLockType = lockContext.getExplicitLockType(transaction);
 
@@ -58,32 +58,34 @@ public class LockUtil {
             lockContext.escalate(transaction);
             // 这时候当前的锁只有可能是 S 或 X
             if(LockType.substitutable(lockContext.getExplicitLockType(transaction), requestType)) return;
-            // escalate 后把有影响的锁更新一下
-            effectiveLockType = lockContext.getEffectiveLockType(transaction);
-            explicitLockType = lockContext.getExplicitLockType(transaction);
         }
         // 执行到这里，explicitLockType 只可能是 S 或 NL，而且 requestType 只可能是 X 或 S、X
-        upToUpdateLocks(lockContext, requestType, transaction);
-
+        // 先申请 intent lock
+        if(requestType == LockType.S) upToUpdateLocks(parentContext, transaction, LockType.IS);
+        if(requestType == LockType.X) upToUpdateLocks(parentContext, transaction, LockType.IX);
+        // 再在当前资源上锁
+        if(lockContext.getExplicitLockType(transaction) == LockType.S && requestType == LockType.X) {
+            lockContext.promote(transaction, requestType);
+        }
+        if(lockContext.getExplicitLockType(transaction) == LockType.NL) {
+            lockContext.acquire(transaction, requestType);
+        }
 
     }
 
 
     // TODO(proj4_part2) add any helper methods you want
-    private static void upToUpdateLocks(LockContext lockContext, LockType requestType, TransactionContext transaction) {
-        LockContext currContext = lockContext;
-        LockContext parentContext = currContext.parentContext();
-        // 如果是一链串的，上面一定是一系列的 intent lock
-        while(parentContext != null) {
-
-            if(LockType.canBeParentLock(parentContext.getExplicitLockType(transaction), requestType)) {
-                break;
+    private static void upToUpdateLocks(LockContext currContext, TransactionContext transaction, LockType requestType) {
+        assert(requestType == LockType.IS || requestType == LockType.IX);
+        if(currContext == null) return;
+        upToUpdateLocks(currContext.parentContext(), transaction, requestType);
+        LockType currLockType = currContext.getExplicitLockType(transaction);
+        if(!LockType.substitutable(currLockType, requestType)) {
+            if(currLockType == LockType.NL) {
+                currContext.acquire(transaction, requestType);
+            } else {
+                currContext.promote(transaction, requestType);
             }
-            currContext = currContext.parentContext();
-            parentContext = currContext.parentContext();
         }
-
-        currContext.escalate(transaction);
-        currContext.promote(transaction, requestType);
     }
 }

@@ -62,6 +62,7 @@ public class TestDatabase2PL {
     @ClassRule
     public static  TemporaryFolder checkFolder = new TemporaryFolder();
 
+
     @BeforeClass
     public static void beforeAll() {
         passedPreCheck = TestDatabaseDeadlockPrecheck.performCheck(checkFolder);

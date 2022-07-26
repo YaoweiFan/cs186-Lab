@@ -98,7 +98,7 @@ public class LockContext {
             throws InvalidLockException, DuplicateLockRequestException {
         // TODO(proj4_part2): implement
         // 检查 request 是否合法，子孙资源的锁请求是否与祖先资源以上上的锁发生冲突，以下是 project guide 中列举的两种情况
-        if(parent!=null && LockType.canBeParentLock(parent.getEffectiveLockType(transaction), lockType)) {
+        if(parent!=null && !LockType.canBeParentLock(parent.getEffectiveLockType(transaction), lockType)) {
             // 这种情况不可以放在 waitingQueue 中等一等吗?
             throw new InvalidLockException("The request is invalid!");
         }
@@ -499,6 +499,8 @@ public class LockContext {
             LockContext parentContext = fromResourceName(lockman, currName).parentContext();
             if(parentContext == null) return;
             Map<Long, Integer> map = parentContext.numChildLocks;
+            map.putIfAbsent(transaction.getTransNum(), 0);
+            assert(map.get(transaction.getTransNum())+change >= 0);
             map.put(transaction.getTransNum(), map.get(transaction.getTransNum())+change);
         }
     }
