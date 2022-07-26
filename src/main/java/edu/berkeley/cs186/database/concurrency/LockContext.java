@@ -273,9 +273,11 @@ public class LockContext {
         if(readonly) throw new UnsupportedOperationException("The context is readonly!");
 
         boolean noLockHeld = true;
+        LockType lockType = null;
         for (Lock lk : lockman.getLocks(name)) {
             if(lk.transactionNum == transaction.getTransNum()) {
                 noLockHeld = false;
+                lockType = lk.lockType;
             }
         }
         if(noLockHeld) throw new NoLockHeldException("This transaction has no lock at this level!");
@@ -288,6 +290,10 @@ public class LockContext {
 //            updateNumChildLocks(transaction, releaseNames, -1);
 //            return;
 //        }
+
+        // 如果子资源没有上锁且自己并非 intent lock，就直接返回
+        if(getNumChildren(transaction) == 0 && (lockType == LockType.S || lockType == LockType.X)) return;
+
         // 检查自己及子孙资源是否只上了 S/IS
         if (recursiveCheckSisDescendants(this, transaction)) {
             // 只上了 S/IS
@@ -344,7 +350,7 @@ public class LockContext {
         // 如果一直追溯到 database 都没有持有该 transaction 的锁，表明无锁
         if(parent == null) return LockType.NL;
         // 得到祖先资源的 LockType
-        LockType parentLockType = parent.getExplicitLockType(transaction);
+        LockType parentLockType = parent.getEffectiveLockType(transaction);
         // 几种 intent lock 需要处理一下
         if(parentLockType == LockType.IS || parentLockType == LockType.IX) return LockType.NL;
         if(parentLockType == LockType.SIX) return LockType.S;
