@@ -366,20 +366,20 @@ public class LockManager {
         boolean shouldBlock = false;
         synchronized (this) {
             List<Lock> resourceLks = getLocks(name);
-            Lock desLock = null;
+            Lock currLock = null;
             for(Lock lk : resourceLks) {
                 if (lk.transactionNum == transaction.getTransNum() && lk.lockType == newLockType) {
                     throw new DuplicateLockRequestException("This transaction has already acquire a same type lock on the resource!");
                 }
                 if (lk.transactionNum == transaction.getTransNum()) {
-                    desLock = lk;
+                    currLock = lk;
                 }
             }
-            if(desLock == null) {
+            if(currLock == null) {
                 throw new NoLockHeldException("This transaction hasn't have a lock on the resource!");
             }
-            if(!LockType.substitutable(newLockType, desLock.lockType) || newLockType != desLock.lockType) {
-                throw new InvalidLockException("This new lock ca not substitute the old one!");
+            if(!LockType.substitutable(newLockType, currLock.lockType) || newLockType == currLock.lockType) {
+                throw new InvalidLockException("This new lock can't substitute the old one!");
             }
 
             ResourceEntry entry = getResourceEntry(name);

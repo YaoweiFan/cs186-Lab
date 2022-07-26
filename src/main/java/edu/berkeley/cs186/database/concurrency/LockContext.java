@@ -1,5 +1,6 @@
 package edu.berkeley.cs186.database.concurrency;
 
+import com.sun.org.apache.bcel.internal.generic.RETURN;
 import edu.berkeley.cs186.database.Transaction;
 import edu.berkeley.cs186.database.TransactionContext;
 
@@ -97,6 +98,9 @@ public class LockContext {
     public void acquire(TransactionContext transaction, LockType lockType)
             throws InvalidLockException, DuplicateLockRequestException {
         // TODO(proj4_part2): implement
+        // 检查该 context 是否只是只读的？
+        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
+
         // 检查 request 是否合法，子孙资源的锁请求是否与祖先资源以上上的锁发生冲突，以下是 project guide 中列举的两种情况
         if(parent!=null && !LockType.canBeParentLock(parent.getEffectiveLockType(transaction), lockType)) {
             // 这种情况不可以放在 waitingQueue 中等一等吗?
@@ -110,8 +114,6 @@ public class LockContext {
         //for(Lock lk : lockman.getLocks(name)) {
         //    if(lk.transactionNum == transaction.getTransNum()) throw new DuplicateLockRequestException("A lock is already held by the transaction on the resource!");
         //}
-        // 检查该 context 是否只是只读的？
-        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
 
         // lockManager 会检查是否有其他 transaction 的 lock 与本请求冲突
         lockman.acquire(transaction, name, lockType);
@@ -135,6 +137,9 @@ public class LockContext {
     public void release(TransactionContext transaction)
             throws NoLockHeldException, InvalidLockException {
         // TODO(proj4_part2): implement
+        // 检查该 context 是否只是只读的？
+        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
+
         // 检查 transaction 是否持有锁
         boolean noLockHeld = true;
         for(Lock lk : lockman.getLocks(transaction)) {
@@ -156,8 +161,6 @@ public class LockContext {
                 }
             }
         }
-        // 检查该 context 是否只是只读的？
-        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
 
         lockman.release(transaction, name);
         // 更新 numChildLocks
@@ -188,6 +191,9 @@ public class LockContext {
     public void promote(TransactionContext transaction, LockType newLockType)
             throws DuplicateLockRequestException, NoLockHeldException, InvalidLockException {
         // TODO(proj4_part2): implement
+        // 检查该 context 是否只是只读的？
+        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
+
         // 检查锁该transaction是否已经在该资源上上了锁
         // 检查 transaction 是否存在该 resource 的 lock
         boolean hasLock = false;
@@ -208,11 +214,9 @@ public class LockContext {
             throw new InvalidLockException("The lock can't be promoted!");
         }
 
-        if(parent != null && LockType.canBeParentLock(lockman.getLockType(transaction, parent.name), newLockType)){
+        if(parent != null && !LockType.canBeParentLock(lockman.getLockType(transaction, parent.name), newLockType)){
             throw new InvalidLockException("The lock on parent resource for this transaction can't be parent of this newLockType!");
         }
-        // 检查该 context 是否只是只读的？
-        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
 
         if(newLockType == LockType.SIX) {
             if(hasSIXAncestor(transaction)) throw new InvalidLockException("Disallow having IS/S locks on descendants when a SIX lock is held!");
@@ -266,6 +270,8 @@ public class LockContext {
      */
     public void escalate(TransactionContext transaction) throws NoLockHeldException {
         // TODO(proj4_part2): implement
+        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
+
         boolean noLockHeld = true;
         for (Lock lk : lockman.getLocks(name)) {
             if(lk.transactionNum == transaction.getTransNum()) {
@@ -273,9 +279,16 @@ public class LockContext {
             }
         }
         if(noLockHeld) throw new NoLockHeldException("This transaction has no lock at this level!");
-        if(readonly) throw new UnsupportedOperationException("The context is readonly!");
 
-        // 检查子孙资源是否只上了 S/IS
+        // 如果自己及子孙资源全是 intent lock，就直接释放这些锁
+//        if (recursiveCheckIntentDescendants(this, transaction)) {
+//            List<ResourceName> releaseNames = intentDescendants(transaction);
+//            releaseNames.add(name);
+//            lockman.acquireAndRelease(transaction, name, LockType.NL, releaseNames);
+//            updateNumChildLocks(transaction, releaseNames, -1);
+//            return;
+//        }
+        // 检查自己及子孙资源是否只上了 S/IS
         if (recursiveCheckSisDescendants(this, transaction)) {
             // 只上了 S/IS
             List<ResourceName> releaseNames = sisDescendants(transaction);
@@ -385,6 +398,22 @@ public class LockContext {
         return true;
     }
 
+//    private boolean recursiveCheckIntentDescendants(LockContext lockContext, TransactionContext transaction) {
+//        for (Lock lk : lockman.getLocks(lockContext.name)) {
+//            if(lk.transactionNum == transaction.getTransNum()) {
+//                if(lk.lockType != LockType.IS && lk.lockType != LockType.IX) {
+//                    return false;
+//                }
+//            }
+//        }
+//        for(Map.Entry<String, LockContext> entry : lockContext.children.entrySet()) {
+//            if(!recursiveCheckIntentDescendants(entry.getValue(), transaction)) {
+//                return false;
+//            }
+//        }
+//        return true;
+//    }
+
     /**
      * Helper method to get a list of resourceNames of all locks that are S or
      * IS and are descendants of current context for the given transaction.
@@ -444,6 +473,33 @@ public class LockContext {
         return res;
     }
 
+
+
+//    private List<ResourceName> intentDescendants(TransactionContext transaction) {
+//        // TODO(proj4_part2): implement
+//        List<ResourceName> res = new ArrayList<>();
+//        for(Map.Entry<String, LockContext> entry : children.entrySet()) {
+//            res.addAll(recursiveGetIntentDescendants(entry.getValue(), transaction));
+//        }
+//        return res;
+//    }
+//
+//    private List<ResourceName> recursiveGetIntentDescendants(LockContext lockContext, TransactionContext transaction) {
+//        List<ResourceName> res = new ArrayList<>();
+//        for (Lock lk : lockman.getLocks(lockContext.name)) {
+//            if(lk.transactionNum == transaction.getTransNum()) {
+//                if(lk.lockType == LockType.IS || lk.lockType == LockType.IX) {
+//                    res.add(lockContext.name);
+//                    break;
+//                }
+//            }
+//        }
+//        for(Map.Entry<String, LockContext> entry : lockContext.children.entrySet()) {
+//            res.addAll(recursiveGetSisDescendants(entry.getValue(), transaction));
+//        }
+//        return res;
+//    }
+
     /**
      * Disables locking descendants. This causes all new child contexts of this
      * context to be readonly. This is used for indices and temporary tables
@@ -497,7 +553,7 @@ public class LockContext {
         // 释放锁的 resource 的 parent lockContext 需要减一
         for(ResourceName currName : updateResourceNameList) {
             LockContext parentContext = fromResourceName(lockman, currName).parentContext();
-            if(parentContext == null) return;
+            if(parentContext == null) continue;
             Map<Long, Integer> map = parentContext.numChildLocks;
             map.putIfAbsent(transaction.getTransNum(), 0);
             assert(map.get(transaction.getTransNum())+change >= 0);
