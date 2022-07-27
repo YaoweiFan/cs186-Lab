@@ -52,6 +52,7 @@ public class LockUtil {
         // 执行到这儿说明需要进一步争取资源了
         if(explicitLockType == LockType.IX && requestType == LockType.S) {
             lockContext.promote(transaction, LockType.SIX);
+            return;
         }
         if(explicitLockType == LockType.IS || explicitLockType == LockType.IX || explicitLockType == LockType.SIX) {
             // 这种情况下当前锁是 intent lock，就意味着子资源可能还上有锁
@@ -66,9 +67,11 @@ public class LockUtil {
         // 再在当前资源上锁
         if(lockContext.getExplicitLockType(transaction) == LockType.S && requestType == LockType.X) {
             lockContext.promote(transaction, requestType);
+            return;
         }
         if(lockContext.getExplicitLockType(transaction) == LockType.NL) {
             lockContext.acquire(transaction, requestType);
+            return;
         }
 
     }

@@ -226,7 +226,9 @@ public class LockContext {
             // you should simultaneously release all descendant locks of type S/IS,
             // since we disallow having IS/S locks on descendants when a SIX lock is held.
             List<ResourceName> releaseNames = sisDescendants(transaction);
+            releaseNames.add(name);
             lockman.acquireAndRelease(transaction, name, LockType.SIX, releaseNames);
+            releaseNames.remove(name);
             // 更新 numChildLocks
             updateNumChildLocks(transaction, releaseNames, -1);
 
@@ -298,14 +300,18 @@ public class LockContext {
         if (recursiveCheckSisDescendants(this, transaction)) {
             // 只上了 S/IS
             List<ResourceName> releaseNames = sisDescendants(transaction);
-            // 已经有同 transaction、同 resource 的 lock hold 了还能调用这个函数吗？
+            // 这么做可能是没什么用，但好像会影响 log，具体可参考 TestLockUtil.testIStoS 这个测试
+            releaseNames.add(name);
             lockman.acquireAndRelease(transaction, name, LockType.S, releaseNames);
+            releaseNames.remove(name);
             // 这个只处理了 release 的部分，但是由于这个 level 本身就有锁，不需要考虑 acquire 的部分
             updateNumChildLocks(transaction, releaseNames, -1);
         } else {
             // 不只上了 S/IS
             List<ResourceName> releaseNames = recursiveGetLockDescendants(this, transaction);
+            releaseNames.add(name);
             lockman.acquireAndRelease(transaction, name, LockType.X, releaseNames);
+            releaseNames.remove(name);
             // 这个只处理了 release 的部分，但是由于这个 level 本身就有锁，不需要考虑 acquire 的部分
             updateNumChildLocks(transaction, releaseNames, -1);
         }
