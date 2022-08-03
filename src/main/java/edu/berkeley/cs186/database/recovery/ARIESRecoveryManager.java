@@ -185,8 +185,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
         // back from the next record that hasn't yet been undone.
         long currentLSN = lastRecord.getUndoNextLSN().orElse(lastRecordLSN);
         // TODO(proj5) implement the rollback logic described above
-        LogRecord currRecord = logManager.fetchLogRecord(currentLSN);
         while(currentLSN > LSN) {
+            LogRecord currRecord = logManager.fetchLogRecord(currentLSN);
             if(currRecord.isUndoable()) {
                 LogRecord CLR = currRecord.undo(transactionEntry.lastLSN);
                 logManager.appendToLog(CLR);
@@ -195,7 +195,6 @@ public class ARIESRecoveryManager implements RecoveryManager {
             }
             if(logManager.fetchLogRecord(currentLSN).getPrevLSN().isPresent()){
                 currentLSN = logManager.fetchLogRecord(currentLSN).getPrevLSN().get();
-                currRecord = logManager.fetchLogRecord(currentLSN);
             } else {
                 break;
             }
@@ -439,7 +438,10 @@ public class ARIESRecoveryManager implements RecoveryManager {
         long savepointLSN = transactionEntry.getSavepoint(name);
 
         // TODO(proj5): implement
-        return;
+        Transaction.Status status = transactionEntry.transaction.getStatus();
+        rollbackToLSN(transNum, savepointLSN);
+        // 为什么  the status of the transaction does not change？
+        transactionEntry.transaction.setStatus(status);
     }
 
     /**
