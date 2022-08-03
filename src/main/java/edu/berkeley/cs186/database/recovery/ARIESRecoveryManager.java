@@ -3,6 +3,7 @@ package edu.berkeley.cs186.database.recovery;
 import edu.berkeley.cs186.database.Transaction;
 import edu.berkeley.cs186.database.common.Pair;
 import edu.berkeley.cs186.database.concurrency.DummyLockContext;
+import edu.berkeley.cs186.database.concurrency.LockContext;
 import edu.berkeley.cs186.database.io.DiskSpaceManager;
 import edu.berkeley.cs186.database.memory.BufferManager;
 import edu.berkeley.cs186.database.memory.Page;
@@ -248,8 +249,21 @@ public class ARIESRecoveryManager implements RecoveryManager {
                              byte[] after) {
         assert (before.length == after.length);
         assert (before.length <= BufferManager.EFFECTIVE_PAGE_SIZE / 2);
-        // TODO(proj5): implement
-        return -1L;
+        // TODO(proj5):
+        TransactionTableEntry transactionEntry = transactionTable.get(transNum);
+        assert (transactionEntry != null);
+        long prevLSN = transactionEntry.lastLSN;
+        LogRecord record = new UpdatePageLogRecord(transNum, pageNum, prevLSN, pageOffset, before, after);
+        long lsn = logManager.appendToLog(record);
+        // 写内容到内存
+        record.redo(this, diskSpaceManager, bufferManager);
+        // 更新 transaction 表
+        transactionEntry.lastLSN = lsn;
+        // 更新 dirty 表
+        if (!dirtyPageTable.containsKey(pageNum)) {
+            dirtyPageTable.put(pageNum, lsn);
+        }
+        return lsn;
     }
 
     /**
