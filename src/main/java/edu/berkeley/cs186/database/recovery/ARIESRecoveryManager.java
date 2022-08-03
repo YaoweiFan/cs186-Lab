@@ -143,13 +143,19 @@ public class ARIESRecoveryManager implements RecoveryManager {
         TransactionTableEntry transactionEntry = transactionTable.get(transNum);
         assert (transactionEntry != null);
         if(transactionEntry.transaction.getStatus() == Transaction.Status.ABORTING) {
-            rollbackToLSN(transNum, transactionEntry.lastLSN);
+            long desLSN = transactionEntry.lastLSN;
+            LogRecord desRecord = logManager.fetchLogRecord(desLSN);
+            while(desRecord.getPrevLSN().isPresent()) {
+                desLSN = desRecord.getPrevLSN().get();
+                desRecord = logManager.fetchLogRecord(desLSN);
+            }
+            rollbackToLSN(transNum, desLSN);
         }
         long prevLSN = transactionEntry.lastLSN;
         long lsn = logManager.appendToLog(new EndTransactionLogRecord(transNum, prevLSN));
         transactionEntry.lastLSN = lsn;
         transactionEntry.transaction.setStatus(Transaction.Status.COMPLETE);
-        transactionTable.remove(transactionEntry);
+        transactionTable.remove(transNum);
         return lsn;
     }
 
@@ -181,8 +187,9 @@ public class ARIESRecoveryManager implements RecoveryManager {
         LogRecord currRecord = logManager.fetchLogRecord(currentLSN);
         while(currentLSN > LSN) {
             if(currRecord.isUndoable()) {
-                LogRecord CLR = currRecord.undo(currentLSN);
+                LogRecord CLR = currRecord.undo(transactionEntry.lastLSN);
                 logManager.appendToLog(CLR);
+                transactionEntry.lastLSN = CLR.getLSN();
                 CLR.redo(this, diskSpaceManager, bufferManager);
             }
             if(logManager.fetchLogRecord(currentLSN).getPrevLSN().isPresent()){
