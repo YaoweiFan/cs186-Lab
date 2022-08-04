@@ -256,7 +256,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
         LogRecord record = new UpdatePageLogRecord(transNum, pageNum, prevLSN, pageOffset, before, after);
         long lsn = logManager.appendToLog(record);
         // 写内容到内存
-        record.redo(this, diskSpaceManager, bufferManager);
+//        record.redo(this, diskSpaceManager, bufferManager);
         // 更新 transaction 表
         transactionEntry.lastLSN = lsn;
         // 更新 dirty 表
@@ -754,7 +754,35 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartUndo() {
         // TODO(proj5): implement
-        return;
+        PriorityQueue<Long> Q = new PriorityQueue<>();
+        for(Map.Entry<Long, TransactionTableEntry> entry : transactionTable.entrySet()) {
+            if(entry.getValue().transaction.getStatus() == Transaction.Status.RECOVERY_ABORTING) {
+                Q.add(entry.getValue().lastLSN);
+            }
+        }
+        // 采用最大堆的方式是为了能够顺序遍历 log (从后向前)
+        while(!Q.isEmpty()) {
+            Long lsn = Q.poll();
+            LogRecord r = logManager.fetchLogRecord(lsn);
+            if(r.isUndoable()) {
+                TransactionTableEntry entry = transactionTable.get(r.getTransNum().get());
+                LogRecord CLR = r.undo(entry.lastLSN);
+                logManager.appendToLog(CLR);
+                entry.lastLSN = CLR.getLSN();
+                CLR.redo(this, diskSpaceManager, bufferManager);
+            }
+            if(r.getUndoNextLSN().isPresent() && r.getUndoNextLSN().get() != 0) {
+                Q.add(r.getUndoNextLSN().get());
+            } else {
+                if(r.getPrevLSN().isPresent() && r.getPrevLSN().get() != 0) Q.add(r.getPrevLSN().get());
+            }
+            if(r.getPrevLSN().get() == 0){
+                transactionTable.get(r.getTransNum().get()).transaction.cleanup();
+                transactionTable.get(r.getTransNum().get()).transaction.setStatus(Transaction.Status.COMPLETE);
+                end(r.getTransNum().get());
+                transactionTable.remove(r.getTransNum().get());
+            }
+        }
     }
 
     /**
