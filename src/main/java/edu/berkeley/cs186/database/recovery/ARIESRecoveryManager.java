@@ -4,6 +4,7 @@ import edu.berkeley.cs186.database.Transaction;
 import edu.berkeley.cs186.database.common.Pair;
 import edu.berkeley.cs186.database.concurrency.DummyLockContext;
 import edu.berkeley.cs186.database.concurrency.LockContext;
+import edu.berkeley.cs186.database.concurrency.LockType;
 import edu.berkeley.cs186.database.io.DiskSpaceManager;
 import edu.berkeley.cs186.database.memory.BufferManager;
 import edu.berkeley.cs186.database.memory.Page;
@@ -604,7 +605,89 @@ public class ARIESRecoveryManager implements RecoveryManager {
         // Set of transactions that have completed
         Set<Long> endedTransactions = new HashSet<>();
         // TODO(proj5): implement
-        return;
+        Iterator<LogRecord> itr = logManager.scanFrom(LSN);
+        while (itr.hasNext()) {
+            LogRecord r = itr.next();
+            LSN = r.getLSN();
+            // 如果 log record 与某个 transaction table 相关，更新 transactionTable
+            if(r.getTransNum().isPresent()) {
+                if(transactionTable.containsKey(r.getTransNum().get())) {
+                    transactionTable.get(r.getTransNum().get()).lastLSN = LSN;
+                } else {
+                    Transaction transaction = newTransaction.apply(r.getTransNum().get());
+                    TransactionTableEntry entry = new TransactionTableEntry(transaction);
+                    entry.lastLSN = r.getLSN();
+                    entry.transaction.setStatus(Transaction.Status.RUNNING);
+                    transactionTable.put(r.getTransNum().get(), entry);
+                }
+            }
+            // 如果 log record 与某个 page 相关，更新 dirtyPageTable
+            if(r.getPageNum().isPresent()) {
+                if(r.getType() == LogType.UPDATE_PAGE || r.getType() == LogType.UNDO_UPDATE_PAGE) {
+                    if(!dirtyPageTable.containsKey(r.getPageNum().get())) {
+                        dirtyPageTable.put(r.getPageNum().get(), LSN);
+                    }
+                }
+                if(r.getType() == LogType.FREE_PAGE || r.getType() == LogType.UNDO_ALLOC_PAGE) {
+                    dirtyPageTable.remove(r.getPageNum().get());
+                }
+            }
+            // 如果 log record 改变了 transaction 的 status
+            if(r.getType() == LogType.COMMIT_TRANSACTION || r.getType() == LogType.ABORT_TRANSACTION || r.getType() == LogType.END_TRANSACTION) {
+                TransactionTableEntry entry = transactionTable.get(r.getTransNum().get());
+                entry.lastLSN = LSN;
+                if(r.getType() == LogType.COMMIT_TRANSACTION) entry.transaction.setStatus(Transaction.Status.COMMITTING);
+                if(r.getType() == LogType.ABORT_TRANSACTION) entry.transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                if(r.getType() == LogType.END_TRANSACTION) {
+                    entry.transaction.cleanup();
+                    entry.transaction.setStatus(Transaction.Status.COMPLETE);
+                    transactionTable.remove(r.getTransNum().get());
+                    endedTransactions.add(r.getTransNum().get());
+                }
+            }
+            // 如果 log record 是 end_checkpoint record
+            if(r.getType() == LogType.END_CHECKPOINT) {
+                Map<Long, Long> dpt = r.getDirtyPageTable();
+                dirtyPageTable.putAll(dpt);
+                Map<Long, Pair<Transaction.Status, Long>> txn = r.getTransactionTable();
+                for(Map.Entry<Long, Pair<Transaction.Status, Long>> entry : txn.entrySet()) {
+                    if(endedTransactions.contains(entry.getKey())) continue;
+                    if(!transactionTable.containsKey(entry.getKey())) {
+                        Transaction transaction = newTransaction.apply(entry.getKey());
+                        TransactionTableEntry newEntry = new TransactionTableEntry(transaction);
+                        newEntry.lastLSN = entry.getValue().getSecond();
+                        newEntry.transaction.setStatus(entry.getValue().getFirst());
+                        if(entry.getValue().getFirst() == Transaction.Status.ABORTING) newEntry.transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                        transactionTable.put(entry.getKey(), newEntry);
+                    } else {
+                        if(transactionTable.get(entry.getKey()).lastLSN < entry.getValue().getSecond()) {
+                            transactionTable.get(entry.getKey()).lastLSN = entry.getValue().getSecond();
+                            transactionTable.get(entry.getKey()).transaction.setStatus(entry.getValue().getFirst());
+                            if(entry.getValue().getFirst() == Transaction.Status.ABORTING) transactionTable.get(entry.getKey()).transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                        }
+                    }
+                    // 现在 end_checkpoint 中存的 transaction table 中的每一个 transaction 在 transactionTable 中都能被找到了
+                    // 为什么会出现这些情况？
+                    if(transactionTable.get(entry.getKey()).transaction.getStatus() == Transaction.Status.RUNNING || entry.getValue().getFirst() == Transaction.Status.COMPLETE) {
+                        transactionTable.get(entry.getKey()).transaction.setStatus(entry.getValue().getFirst());
+                        if(transactionTable.get(entry.getKey()).transaction.getStatus() == Transaction.Status.ABORTING) transactionTable.get(entry.getKey()).transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                    }
+                }
+            }
+        }
+        // 最后 transactionTable 中的 Status 只会是 RUNNING, COMMITTING, or RECOVERY_ABORTING
+        for(Map.Entry<Long, TransactionTableEntry> entry : transactionTable.entrySet()) {
+            if(entry.getValue().transaction.getStatus() == Transaction.Status.COMMITTING) {
+                entry.getValue().transaction.cleanup();
+                entry.getValue().transaction.setStatus(Transaction.Status.COMPLETE);
+                end(entry.getKey());
+                transactionTable.remove(entry.getKey());
+            }
+            if(entry.getValue().transaction.getStatus() == Transaction.Status.RUNNING) {
+                abort(entry.getKey());
+                entry.getValue().transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+            }
+        }
     }
 
     /**
