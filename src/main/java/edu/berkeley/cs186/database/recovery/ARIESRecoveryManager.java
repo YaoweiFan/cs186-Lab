@@ -754,7 +754,12 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartUndo() {
         // TODO(proj5): implement
-        PriorityQueue<Long> Q = new PriorityQueue<>();
+        PriorityQueue<Long> Q = new PriorityQueue<>(new Comparator<Long>() {
+            @Override
+            public int compare(Long o1, Long o2) {
+                return o2.compareTo(o1);
+            }
+        });
         for(Map.Entry<Long, TransactionTableEntry> entry : transactionTable.entrySet()) {
             if(entry.getValue().transaction.getStatus() == Transaction.Status.RECOVERY_ABORTING) {
                 Q.add(entry.getValue().lastLSN);
