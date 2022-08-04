@@ -704,7 +704,39 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartRedo() {
         // TODO(proj5): implement
-        return;
+        // 找到最小的 recNum 就是起始点
+        Long pageNum;
+        long recLSN = Long.MAX_VALUE;
+        for(Map.Entry<Long, Long> entry : dirtyPageTable.entrySet()) {
+            if(recLSN > entry.getValue()) {
+                recLSN = entry.getValue();
+                pageNum = entry.getKey();
+            }
+        }
+        Iterator<LogRecord> itr = logManager.scanFrom(recLSN);
+        while(itr.hasNext()) {
+            LogRecord r = itr.next();
+            if(r.isRedoable()) {
+                if(r.getType() == LogType.ALLOC_PART || r.getType() == LogType.UNDO_ALLOC_PART || r.getType() == LogType.FREE_PART || r.getType() == LogType.UNDO_FREE_PART) {
+                    r.redo(this, diskSpaceManager, bufferManager);
+                } else if(r.getType() == LogType.ALLOC_PAGE || r.getType() == LogType.UNDO_FREE_PAGE) {
+                    r.redo(this, diskSpaceManager, bufferManager);
+                } else if(r.getType() == LogType.UPDATE_PAGE ||r.getType() == LogType.UNDO_UPDATE_PAGE || r.getType() == LogType.UNDO_ALLOC_PAGE || r.getType() == LogType.FREE_PAGE) {
+                    if(dirtyPageTable.containsKey(r.getPageNum().get())) {
+                        if(r.getLSN() >= dirtyPageTable.get(r.getPageNum().get())) {
+                            Page page = bufferManager.fetchPage(new DummyLockContext(), r.getPageNum().get());
+                            try {
+                                if(r.getLSN() > page.getPageLSN()) {
+                                    r.redo(this, diskSpaceManager, bufferManager);
+                                }
+                            } finally {
+                                page.unpin();
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
